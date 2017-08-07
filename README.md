@@ -1,6 +1,6 @@
 # pi2bus
 
-V každém veřejném místě, veřejném dopravním prostředku, na úřadech apod. je v dnešní mobilní, rychlé a uspěchané době požadavek na internetové připojení. Nálsedující řádky a skripty Vám usnadní přemýšelní a vymášlení něčeho už dávno vymyšleného a poskytnou Vám HotSpot za relativně nízké peníze.
+V každém veřejném místě, veřejném dopravním prostředku, na úřadech apod. je v dnešní mobilní, rychlé a uspěchané době požadavek na internetové připojení. Nálsedující řádky a skripty Vám usnadní přemýšelní a vymýšlení něčeho už dávno vymyšleného a poskytnou Vám HotSpot za relativně nízké peníze.
 
 ## Než začnete...
 
@@ -36,10 +36,10 @@ Přípojte modem k Raspberry a spusťe:
 ```
 Měli by jste dostat informaci o úspěšném přidání spojení od network-manager.
 
-Jako poslední je třeba nastavit iptables pro správnou funkci portforwardingu. Ten je povolen už v prvním kroku, ale bez pravidel v iptables pro toto využití nedává smysl. Zároveň je aplikovám, nazývám to, minimal firewall. Povoluje se jen základní komunikace do internetu. Pokud potřebujete povolit něco navíc, seznamte se s dokumetací iptables.
+Jako poslední je třeba nastavit iptables pro správnou funkci portforwardingu. Ten je povolen už v prvním kroku, ale bez pravidel v iptables pro toto využití nedává smysl. Zároveň je aplikován, nazývám to, minimal firewall. Povoluje se jen základní komunikace do internetu. Pokud potřebujete povolit něco navíc, seznamte se s dokumetací iptables.
 
 ```
-./init-pi2bus-firewall
+./init-pi2bus-firewall.sh
 ```
 Po instalaci následuje restart.
 
@@ -51,7 +51,27 @@ Po staru OS se můžete připojit k Vaši nové bezdrátové síti. Pokud jste d
 
 ## Nasazení
 
-Záběr využití této konfigurace je obrovksý stejně jako potenciál raspberry.
+Záběr využití této konfigurace je obrovksý stejně jako potenciál Raspberry.
+
+## Funkce navíc
+
+### Agregace
+
+Pokud požadujete mít kontrolu nad rychlostí, chcete z nějakého důvodu omezit rychlost, můžete využít skriptu agregace.
+Spusťte příkaz:
+```
+./init-pi2bus-agregace.sh
+```
+Přikaždém startu OS se aplikuje omezení rychlosti na všechny možné IP adresy v bezdrátové síti. Limiti se nastavují v adresáři /opt/pi2bus/settings
+
+### Statistika
+
+Pokud chcete mít přehled o přenesených datech a aktuálnch informací s Raspberry, nainstalujte statistiku.
+Spsuťte příkaz:
+```
+./init-pi2bus-stat.sh
+```
+Po připojení k bezdrátové síti si v prohlížeči zadejte adresu Raspberry. Dostanete základní statistiku.
 
 ## Autor
 
