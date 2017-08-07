@@ -1,0 +1,17 @@
+#!/bin/bash
+
+
+STATUS_PING=`ping -c1 -w3 8.8.8.8 > /dev/null 2>&1 && echo 1 || echo 0`
+echo $STATUS_PING
+
+
+while [ $STATUS_PING -ne 1 ]; do
+	sleep 5
+	STATUS_PING=`ping -c1 -w3 $IP > /dev/null 2>&1 && echo 1 || echo 0`
+done
+
+if [ $STATUS_PING -eq 1 ]; then
+	/etc/init.d/ntp stop
+	ntpd -q -g
+	/etc/init.d/ntp start
+fi

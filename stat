@@ -1,0 +1,454 @@
+#!/bin/bash
+#
+# Skript pro vytvareni statistiky k pi2bus
+# autor: Roman Fic, ZD systemy, s.r.o.
+# mail: roman.fic@zdsystemy.cz
+
+
+# aktualni rok a mesic
+CURY=`date +%y`
+CURM=`date +%m`
+
+# definovani adresaru
+D_VAR="/opt/pi2bus/stat/var"
+D_STAT="/opt/pi2bus/stat"
+D_DATA="/opt/pi2bus/stat/data"
+D_CSV="/opt/pi2bus/stat/csv"
+D_MSTAT="/opt/pi2bus/stat/mstat"
+D_LEASES="/var/lib/dhcp"
+D_LOG_LEASE="/opt/pi2bus/stat/dhcp-leases"
+D_LOG_MODEM="/opt/pi2bus/stat/modem"
+D_TTY="/dev/ttyUSB0"
+D_WWW="/var/www/html"
+D_SETTINGS="/opt/pi2bus/settings"
+
+# definovani souboru
+F_LOG_LEASE="dhcp-leases.csv"
+F_PROCSTAT="/proc/stat"
+F_BOOTTIME="/opt/pi2bus/stat/var/boottime"
+F_BOOTLASTTIME="/opt/pi2bus/stat/var/bootlasttime"
+F_MSTAT="$D_MSTAT/mstat$CURY$CURM"
+F_LOG_SIGNAL="signal.csv"
+F_HTML_STATUS_PAGE="status.html"
+F_HTML_STATUS_WAN="wan.html"
+F_HTML_STATUS_WLAN="wlan.html"
+F_HTML_STATUS_STATS="stats.html"
+
+# definovani promennych
+HOSTNAME=`cat /etc/hostname`
+INTERFACE_WAN=`cat /opt/pi2bus/settings/wan`
+INTERFACE_LAN=`cat /opt/pi2bus/settings/lan`
+VAR_DOWNLOAD=`cat /opt/pi2bus/settings/download`
+VAR_UPLOAD=`cat /opt/pi2bus/settings/upload`
+VAR_MAXBAND=`cat /opt/pi2bus/settings/maxbandwidth`
+VAR_SUBNET=`cat /opt/pi2bus/settings/subnet`
+
+# informace o wan (ppp0)
+WAN_IP=`/sbin/ifconfig ppp0 2>/dev/null|awk '/inet addr:/ {print $2}'|sed 's/addr://'`
+WAN_MASK=`/sbin/ifconfig ppp0 2>/dev/null | awk '/Mask:/ {print $4}' | sed 's/Mask://'`
+WAN_PTP=`/sbin/ifconfig ppp0 2>/dev/null | awk '/P-t-P:/ {print $3}' | sed 's/P-t-P://'`
+WAN_IP_PUBLIC=`curl ipinfo.io/ip`
+
+# informace o wlan (wlan0)
+WLAN_IP=`/sbin/ifconfig wlan0 2>/dev/null|awk '/inet addr:/ {print $2}'|sed 's/addr://'`
+WLAN_MASK=`/sbin/ifconfig wlan0 2>/dev/null | awk '/Mask:/ {print $4}' | sed 's/Mask://'`
+
+# stav sluzby dhcpd
+if (( $(ps -ef | grep -v grep | grep dhcpd | wc -l) > 0 )); then
+	DHCP_STATUS="DHCP service is running"
+else
+	DHCP_STATUS="DHCP service error. Contact helpdesk."
+fi
+
+# vytvoreni adresaru pokud neexistuji
+mkdir -p $D_STAT
+mkdir -p $D_DATA
+mkdir -p $D_VAR
+mkdir -p $D_CSV
+mkdir -p $D_MSTAT
+mkdir -p $D_LOG_LEASE
+mkdir -p $D_LOG_MODEM
+
+# datum a cas startu os
+if [ ! -f $F_BOOTTIME ]; then
+	cat $F_PROCSTAT | grep btime | awk '{ print $2 }' > $F_BOOTTIME
+fi
+
+# osetrni prvniho startu os
+if [ ! -f $F_BOOTLASTTIME ]; then
+	echo "0" > $F_BOOTLASTTIME
+	echo "0" > /opt/pi2bus/stat/data/0.rx-bytes-wan
+	echo "0" > /opt/pi2bus/stat/data/0.tx-bytes-wan
+	echo "0" > /opt/pi2bus/stat/data/0.rx-packets-wan
+	echo "0" > /opt/pi2bus/stat/data/0.tx-packets-wan
+	echo "0" > /opt/pi2bus/stat/data/0.rx-bytes-lan
+	echo "0" > /opt/pi2bus/stat/data/0.tx-bytes-lan
+	echo "0" > /opt/pi2bus/stat/data/0.rx-packets-lan
+	echo "0" > /opt/pi2bus/stat/data/0.tx-packets-lan
+fi
+
+# definovani ruznych casu pro pozdejsi potreby
+TIME_UPTIME=`cat $F_PROCSTAT | grep btime | awk '{ print $2 }'`
+TIME_NOW=`date +%s`
+
+BOOTTIME=`cat $F_BOOTTIME`
+BOOTLASTTIME=`cat $F_BOOTLASTTIME`
+
+# precteni aktualni hodnoty rx tx pro wan (ppp0) a wlan (wlan0)
+RX_BYTES_WAN=`cat /sys/class/net/$INTERFACE_WAN/statistics/rx_bytes`
+TX_BYTES_WAN=`cat /sys/class/net/$INTERFACE_WAN/statistics/tx_bytes`
+RX_PACKETS_WAN=`cat /sys/class/net/$INTERFACE_WAN/statistics/rx_packets`
+TX_PACKETS_WAN=`cat /sys/class/net/$INTERFACE_WAN/statistics/tx_packets`
+
+RX_BYTES_LAN=`cat /sys/class/net/$INTERFACE_LAN/statistics/rx_bytes`
+TX_BYTES_LAN=`cat /sys/class/net/$INTERFACE_LAN/statistics/tx_bytes`
+RX_PACKETS_LAN=`cat /sys/class/net/$INTERFACE_LAN/statistics/rx_packets`
+TX_PACKETS_LAN=`cat /sys/class/net/$INTERFACE_LAN/statistics/tx_packets`
+
+# zapis aktualni rx tx pro wan (ppp0) a wlan (wlanO) do soubrou s timestamp boot os
+echo $RX_BYTES_WAN > /opt/pi2bus/stat/data/$TIME_UPTIME.rx-bytes-wan
+echo $TX_BYTES_WAN > /opt/pi2bus/stat/data/$TIME_UPTIME.tx-bytes-wan
+echo $RX_PACKETS_WAN > /opt/pi2bus/stat/data/$TIME_UPTIME.rx-packets-wan
+echo $TX_PACKETS_WAN > /opt/pi2bus/stat/data/$TIME_UPTIME.tx-packets-wan
+echo $RX_BYTES_LAN > /opt/pi2bus/stat/data/$TIME_UPTIME.rx-bytes-lan
+echo $TX_BYTES_LAN > /opt/pi2bus/stat/data/$TIME_UPTIME.tx-bytes-lan
+echo $RX_PACKETS_LAN > /opt/pi2bus/stat/data/$TIME_UPTIME.rx-packets-lan
+echo $TX_PACKETS_LAN > /opt/pi2bus/stat/data/$TIME_UPTIME.tx-packets-lan
+
+# zapis aktualni rx tx pro wan (ppp0) a wlan (wlanO) do csv soubrou s timestamp boot os
+echo "$HOSTNAME,$TIME_UPTIME,$TIME_NOW,$INTERFACE_WAN,$RX_BYTES_WAN,$TX_BYTES_WAN,$RX_PACKETS_WAN,$TX_PACKETS_WAN" >> $D_CSV/stat$TIME_UPTIME.csv
+echo "$HOSTNAME,$TIME_UPTIME,$TIME_NOW,$INTERFACE_LAN,$RX_BYTES_LAN,$TX_BYTES_LAN,$RX_PACKETS_LAN,$TX_PACKETS_LAN" >> $D_CSV/stat$TIME_UPTIME.csv
+
+# pokud je timestamp boot os shodny s poslednim ulozenym boot os provede se precteni aktualni rx tx pro wan (ppp0) a wlan (wlanO)
+# a pricteni do mesicni statistiky aktualniho mesice
+# probehne zapis aktualni rx tx pro wan (ppp0) a wlan (wlanO) do soubrou s oznacenim aktualniho mesice
+if [ $BOOTTIME -eq $TIME_UPTIME ]; then
+	LB_RX_BYTES_WAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.rx-bytes-wan`
+	LB_TX_BYTES_WAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.tx-bytes-wan`
+	LB_RX_PACKETS_WAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.rx-packets-wan`
+	LB_TX_PACKETS_WAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.tx-packets-wan`
+	LB_RX_BYTES_LAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.rx-bytes-lan`
+	LB_TX_BYTES_LAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.tx-bytes-lan`
+	LB_RX_PACKETS_LAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.rx-packets-lan`
+	LB_TX_PACKETS_LAN=`cat /opt/pi2bus/stat/data/$BOOTLASTTIME.tx-packets-lan`
+
+	M_RX_BYTES_WAN=$(($LB_RX_BYTES_WAN+$RX_BYTES_WAN))
+	M_TX_BYTES_WAN=$(($LB_TX_BYTES_WAN+$TX_BYTES_WAN))
+	M_RX_PACKETS_WAN=$(($LB_RX_PACKETS_WAN+$RX_PACKETS_WAN))
+	M_TX_PACKETS_WAN=$(($LB_TX_PACKETS_WAN+$TX_PACKETS_WAN))
+	M_RX_BYTES_LAN=$(($LB_RX_BYTES_LAN+$RX_BYTES_LAN))
+	M_TX_BYTES_LAN=$(($LB_TX_BYTES_LAN+$TX_BYTES_LAN))
+	M_RX_PACKETS_LAN=$(($LB_RX_PACKETS_LAN+$RX_PACKETS_LAN))
+	M_TX_PACKETS_LAN=$(($LB_TX_PACKETS_LAN+$TX_PACKETS_LAN))
+
+	echo $M_RX_BYTES_WAN > $F_MSTAT.rx-bytes-wan
+	echo $M_TX_BYTES_WAN > $F_MSTAT.tx-bytes-wan
+	echo $M_RX_PACKETS_WAN > $F_MSTAT.rx-packets-wan
+	echo $M_TX_PACKETS_WAN > $F_MSTAT.tx-packets-wan
+	echo $M_RX_BYTES_LAN > $F_MSTAT.rx-bytes-lan
+	echo $M_TX_BYTES_LAN > $F_MSTAT.tx-bytes-lan
+	echo $M_RX_PACKETS_LAN > $F_MSTAT.rx-packets-lan
+	echo $M_TX_PACKETS_LAN > $F_MSTAT.tx-packets-lan
+else
+# pokud neni timestamp boot os shodny s poslednim ulozenym boot os provede se zmena timestamp v danych souborech a statistika se vycte pri pristim spusteni
+	echo $BOOTTIME > $F_BOOTLASTTIME
+	echo $TIME_UPTIME > $F_BOOTTIME
+fi
+
+# precteni dhcp leases z souboru dhcpd.leases
+for IP in `cat $D_LEASES/dhcpd.leases|grep ^lease|awk '{ print $2 }'|sort|uniq`
+do
+	DATE=`cat $D_LEASES/dhcpd.leases | grep -A 8 $IP | grep start|awk '{ print $3" "$4 }'|tail -1 | cut -c1-19`
+	CLIENT=`cat $D_LEASES/dhcpd.leases | grep -A 8 $IP | grep client | uniq | awk -F"\"" '{print $2}' | awk -F"\"" '{print $1}'`
+	MAC=`cat $D_LEASES/dhcpd.leases|grep -A 8 $IP| grep ethernet | uniq | cut -c21-37`
+	STATE=`cat $D_LEASES/dhcpd.leases|grep -A 8 $IP| grep active | uniq | cut -c3-22`
+
+	if [ "$CLIENT" = "" ]; then
+		CLIENT="no hostname"
+	fi
+
+	if [ "$STATE" = "binding state active" ]; then
+		echo "$TIME_NOW;$MAC;$IP;$DATE;$CLIENT;$STATE" >> $D_LOG_LEASE/$F_LOG_LEASE
+		ROW_LEASES=$ROW_LEASES"<tr><td class='tg-lgy6'>$IP</td><td class='tg-lqy6'>$MAC</td><td class='tg-lqy6'>$DATE</td><td class='tg-lqy6'>$CLIENT</td></tr>"
+	fi
+done
+
+# precteni nastaveni dhcp serveru
+for DHCP_SUBNET in `cat /etc/dhcp/dhcpd.conf | grep ^subnet | awk '{ print $2 }' | sort | uniq`
+do
+	DHCP_MASK=`cat /etc/dhcp/dhcpd.conf | grep ^subnet | awk '{ print $4 }' | sort | uniq`
+	DHCP_GW=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep routers | awk '{ print $3 }'| tail -1 | awk -F";" '{print $1}'`
+	DHCP_DNS=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep domain-name-servers | awk '{ print $3$4 }'| tail -1 | awk -F";" '{print $1}'`
+	DHCP_BROADCAST=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep broadcast | awk '{ print $3 }'| tail -1 | awk -F";" '{print $1}'`
+	DHCP_DOMAIN=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep domain | awk '{ print $3 }'| tail -1 | awk -F";" '{print $1}' | awk -F"\"" '{print $2}'`
+	DHCP_RANGE=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep range | awk '{ print $2 "-" $3 }'| tail -1 | awk -F";" '{print $1}'`
+	DHCP_DLT=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep default-lease-time | awk '{ print $2 }'| tail -1 | awk -F";" '{print $1}'`
+	DHCP_MLT=`cat /etc/dhcp/dhcpd.conf | grep -A 8 $DHCP_SUBNET | grep max-lease-time | awk '{ print $2 }'| tail -1 | awk -F";" '{print $1}'`
+done
+
+# zjisteni at prikazem uroven gsm signalu
+MODEMCMD=AT+CSQ
+
+{
+	echo -ne "$MODEMCMD"'\r\n' > "$D_TTY"
+
+	if [ $? -eq 1 ]; then
+		echo "error";
+		exit;
+	fi
+
+	{
+		while read -t 1
+		do
+		if [[ $REPLY == +CSQ* ]]; then
+			ARR1=$(echo "$REPLY" | cut -d' ' -f2)
+			ARR2=$(echo "$ARR1" | cut -d',' -f1)
+			if [ $ARR2 -le 9 ]; then
+				SIGNAL="Velmi slaby"
+			fi
+			if [ $ARR2 -ge 10 -a $ARR2 -le 14 ]; then
+				SIGNAL="Slaby"
+			fi
+			if [ $ARR2 -ge 15 -a $ARR2 -le 19 ]; then
+				SIGNAL="Dobry"
+			fi
+			if [ $ARR2 -ge 20 ]; then
+				SIGNAL="Vynikajici"
+			fi
+			echo "$TIME_NOW;$ARR2;$SIGNAL" >> $D_LOG_MODEM/$F_LOG_SIGNAL
+		fi
+		done
+	} < "$D_TTY"
+}
+
+# zjisteni vyuziti sd karty v rpi
+DISK_USED_B=`df -k / | tail -1 | awk '{print $3}'`
+DISK_USED_P=`df -k / | tail -1 | awk '{print $5}'`
+
+# generovani html wan status
+echo "<!DOCTYPE html>"										> $D_STAT/$F_HTML_STATUS_WAN
+echo "<html>"											>> $D_STAT/$F_HTML_STATUS_WAN
+echo "	<head>"											>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<title>WAN Status</title>"							>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<style type='text/css'>"							>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg  {border-collapse:collapse;border-spacing:0;}"			>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg .tg-lqy6{text-align:right;vertical-align:top}"			>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg .tg-yw4l{vertical-align:top}"					>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			.tg .tg-ufe5{background-color:#34cdf9;vertical-align:top}"		>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		</style>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "	</head>"										>> $D_STAT/$F_HTML_STATUS_WAN
+echo "	<body>"											>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<h1>Status WAN</h1>"								>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<table class='tg'>"								>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-yw4l'>WAN</th>"					>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-ufe5'>GSM signal strength</th>"			>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-ufe5'>IP</th>"					>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-ufe5'>Mask</th>"					>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-ufe5'>P-t-P</th>"					>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<th class='tg-ufe5'>Public IP</th>"				>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-ufe5'>Value</td>" 				>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-lqy6'>$SIGNAL ($ARR2)</td>"			>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-lqy6'>$WAN_IP</td>"				>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-lqy6'>$WAN_MASK</td>"				>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-lqy6'>$WAN_PTP</td>"				>> $D_STAT/$F_HTML_STATUS_WAN
+echo "				<td class='tg-lqy6'>$WAN_IP_PUBLIC</td>"			>> $D_STAT/$F_HTML_STATUS_WAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		</table>"									>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WAN
+echo "		<p>Generated $(date -d @$TIME_NOW)</p>"						>> $D_STAT/$F_HTML_STATUS_WAN
+echo "	</body>"										>> $D_STAT/$F_HTML_STATUS_WAN
+echo "</html>"											>> $D_STAT/$F_HTML_STATUS_WAN
+
+
+# generovani html wlan status
+echo "<!DOCTYPE html>"										> $D_STAT/$F_HTML_STATUS_WLAN
+echo "<html>"											>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "	<head>"											>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<title>WLAN Status</title>"							>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<style type='text/css'>"							>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg  {border-collapse:collapse;border-spacing:0;}"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg .tg-lqy6{text-align:right;vertical-align:top}"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg .tg-yw4l{vertical-align:top}"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			.tg .tg-ufe5{background-color:#34cdf9;vertical-align:top}"		>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		</style>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "	</head>"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "	<body>"											>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<h1>Status WLAN</h1>"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<h2>View wlan0 interface</h2>"							>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<table class='tg'>"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<th class='tg-yw4l'>WLAN</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<th class='tg-ufe5'>IP</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<th class='tg-ufe5'>Mask</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Value</td>" 				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-lqy6'>$WLAN_IP</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-lqy6'>$WLAN_MASK</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		</table>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<h2>View DHCP settings on wlan0</h2>"						>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<p>Service DHCP: $DHCP_STATUS</p>"						>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<table class='tg'>"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<th class='tg-yw4l'>DHCP</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<th class='tg-ufe5'>Value</th>" 				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Subnet</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_SUBNET</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Mask</td>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_MASK</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Gateway</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_GW</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>DNS servers</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_DNS</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Broadcast</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_BROADCAST</td>"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Domain</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_DOMAIN</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>DHCP range</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_RANGE</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Default lease time</td>"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_DLT</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-ufe5'>Max lease time</td>"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "				<td class='tg-efe5'>$DHCP_MLT</td>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		</table>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<h2>DHCP leases</h2>"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<table class='tg'>"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "  		<tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "    			<th class='tg-ufe5'>IP</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "    			<th class='tg-ufe5'>MAC</th>"					>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "    			<th class='tg-ufe5'>Date start leases</th>"			>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "    			<th class='tg-ufe5'>Client</th>"				>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "  		</tr>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "			$ROW_LEASES"								>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		</table>"									>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "		<p>Generated $(date -d @$TIME_NOW)</p>"						>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "	</body>"										>> $D_STAT/$F_HTML_STATUS_WLAN
+echo "</html>"											>> $D_STAT/$F_HTML_STATUS_WLAN
+
+
+
+
+# generovani html statistiky
+echo "<!DOCTYPE html>"										> $D_STAT/$F_HTML_STATUS_STATS
+echo "<html>"											>> $D_STAT/$F_HTML_STATUS_STATS
+echo "	<head>"											>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<title>Stats</title>"								>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<style type='text/css'>"							>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg  {border-collapse:collapse;border-spacing:0;}"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg .tg-lqy6{text-align:right;vertical-align:top}"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg .tg-yw4l{vertical-align:top}"					>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			.tg .tg-ufe5{background-color:#34cdf9;vertical-align:top}"		>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		</style>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "	</head>"										>> $D_STAT/$F_HTML_STATUS_STATS
+echo "	<body>"											>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<h1>Hotspot stats $HOSTNAME ID$TIME_NOW</h1>"					>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<h3>WAN traffic</h3>"								>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<table class='tg'>" 								>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			<tr>" 									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<th class='tg-yw4l'>WAN</th>"					>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<th class='tg-ufe5'>Packets - LastBoot</th>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<th class='tg-ufe5'>Bytes - LastBoot</th>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<th class='tg-ufe5'>Packets - $CURM/$CURY</th>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<th class='tg-ufe5'>Bytes - $CURM/$CURY</th>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-ufe5'>Received (RX)</td>"				>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$RX_PACKETS_WAN Pkts</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$RX_BYTES_WAN B</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$M_RX_PACKETS_WAN Pkts</td>"		>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$M_RX_BYTES_WAN B</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				</tr>"								>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-ufe5'>Transmitted (TX)</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$TX_PACKETS_WAN Pkts</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$TX_BYTES_WAN B</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$M_TX_PACKETS_WAN Pkts</td>"		>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$M_TX_BYTES_WAN B</td>"			>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "			<tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-ufe5'>Summary</td>"				>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$(($RX_PACKETS_WAN+$TX_PACKETS_WAN)) Pkts</td>" >> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$(($RX_BYTES_WAN+$TX_BYTES_WAN)) B</td>"	>> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$(($M_RX_PACKETS_WAN+$M_TX_PACKETS_WAN)) Pkts</td>" >> $D_STAT/$F_HTML_STATUS_STATS
+echo "				<td class='tg-lqy6'>$(($M_RX_BYTES_WAN+$M_TX_BYTES_WAN)) B</td>" >> $D_STAT/$F_HTML_STATUS_STATS
+echo "			</tr>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		</table>"									>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<hr />"										>> $D_STAT/$F_HTML_STATUS_STATS
+echo "		<p>Generated $(date -d @$TIME_NOW)</p>"						>> $D_STAT/$F_HTML_STATUS_STATS
+echo "	</body>"										>> $D_STAT/$F_HTML_STATUS_STATS
+echo "</html>"											>> $D_STAT/$F_HTML_STATUS_STATS
+
+
+# generovani html status
+echo "<!DOCTYPE html>"										> $D_STAT/$F_HTML_STATUS_PAGE
+echo "<html>"											>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "	<head>"											>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<title>Status Page</title>"							>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<style type='text/css'>"							>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg  {border-collapse:collapse;border-spacing:0;}"			>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}" >> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg .tg-lqy6{text-align:right;vertical-align:top}"			>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg .tg-yw4l{vertical-align:top}"					>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "			.tg .tg-ufe5{background-color:#34cdf9;vertical-align:top}"		>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		</style>"									>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "	</head>"										>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "	<body>"											>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<h2>Status page</h2>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p>Hostname: $HOSTNAME</p>"							>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p>Boot $(date -d @$TIME_UPTIME)</p>"						>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p>Used SD Card $(($DISK_USED_B/1024)) MB ($DISK_USED_P)</p>"					>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<hr />"									>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p></p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "		<p>Generated $(date -d @$TIME_NOW)</p>"								>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "	</body>"										>> $D_STAT/$F_HTML_STATUS_PAGE
+echo "</html>"											>> $D_STAT/$F_HTML_STATUS_PAGE
+
+
+# kopirovani statistiky do apache root
+cp $D_STAT/$F_HTML_STATUS_PAGE $D_WWW/status.html
+cp $D_STAT/$F_HTML_STATUS_WAN $D_WWW/wan.html
+cp $D_STAT/$F_HTML_STATUS_WLAN $D_WWW/wlan.html
+cp $D_STAT/$F_HTML_STATUS_STATS $D_WWW/stats.html
