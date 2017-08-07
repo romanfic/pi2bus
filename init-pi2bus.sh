@@ -9,12 +9,7 @@ sudo apt-get -y install htop mc openvpn ntp ntpdate isc-dhcp-server hostapd usb-
 # nastaveni data, casu
 sudo dpkg-reconfigure tzdata
 
-# nastaveni synchronizace data a casu
-sudo cp sync-time /etc/network/if-pre-up.d/sync-time
-sudo chmod 755 /etc/network/if-pre-up.d/sync-time
-sudo chown root:root /etc/network/if-pre-up.d/sync-time
-
-# kopirovani promenych a konfig souboru
+# kopirovani promenych a konfiguracnich souboru
 sudo cp interfaces /etc/network/interfaces
 sudo cp hostapd.conf /etc/hostapd/hostapd.conf
 sudo cp hostapd /etc/default/hostapd
