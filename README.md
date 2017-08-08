@@ -62,7 +62,7 @@ Spusťte příkaz:
 ```
 ./init-pi2bus-agregace.sh
 ```
-Přikaždém startu OS se aplikuje omezení rychlosti na všechny možné IP adresy v bezdrátové síti. Limiti se nastavují v adresáři /opt/pi2bus/settings
+Přikaždém startu OS se aplikuje omezení rychlosti na všechny možné IP adresy v bezdrátové síti. Limity se nastavují v adresáři /opt/pi2bus/settings
 
 ### Statistika
 

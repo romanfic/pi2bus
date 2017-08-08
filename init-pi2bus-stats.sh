@@ -6,6 +6,8 @@ sudo cp index.html /var/www/html/index.html
 sudo cp menu.html /var/www/html/menu.html
 sudo chmod 755 /opt/pi2bus/create-stat
 sudo chown root:root /opt/pi2bus/create-stat
+sudo chmod 755 /opt/pi2bus/sync-time
+sudo chown root:root /opt/pi2bus/sync-time
 
 crontab -l > mycron
 echo "@reboot sleep 60 && cd /opt/pi2bus && sync-time >/dev/null 2>&1" >> mycron
