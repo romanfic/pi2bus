@@ -17,33 +17,17 @@ V každém veřejném místě, veřejném dopravním prostředku, na úřadech a
 * Modem Huawei E3372 (USB LTE Stick)
 * SIM nějakého operátora, ve skriptu je použita SIM O2
 
-Nepřipojujte modem dříve než nainstalujete init-pi2bus-modem.sh
-
 ### Instalace
 
 Přejděte do složky, kterou jste klonovali z githubu.
 
 Jako první nainstalujte všechny potřebné balíčky pro HotSpot a rozkopírujte konfigurační soubory. Vše provedete jedním příkazem:
 ```
-./init-pi2bus.sh
+./pi2bus
 ```
-Po instalaci následuje restart OS.
+Po instalaci proveďte restart.
 
-Po startu OS můžeme nainstalovat podporu modemu. Skript počítá se zabezpečením SIM pinem. Doporučuji využít. Sníží se tím zneužítí SIM při případném odcizení ze špatně zvoleného umístění na veřejném místě.
-Přípojte modem k Raspberry a spusťe:
-```
-./init-pi2bus-modem.sh
-```
-Měli by jste dostat informaci o úspěšném přidání spojení od network-manager.
-
-Jako poslední je třeba nastavit iptables pro správnou funkci portforwardingu. Ten je povolen už v prvním kroku, ale bez pravidel v iptables pro toto využití nedává smysl. Zároveň je aplikován, nazývám to, minimal firewall. Povoluje se jen základní komunikace do internetu. Pokud potřebujete povolit něco navíc, seznamte se s dokumetací iptables.
-
-```
-./init-pi2bus-firewall.sh
-```
-Po instalaci následuje restart.
-
-Toto je základní konfigurace hotspotu.
+Toto je základní konfigurace hotspotu. Připojte se k Vaši nové bezdrátové síti.
 
 ## Testování
 
@@ -54,15 +38,6 @@ Po staru OS se můžete připojit k Vaši nové bezdrátové síti. Pokud jste d
 Záběr využití této konfigurace je obrovksý stejně jako potenciál Raspberry.
 
 ## Funkce navíc
-
-### Agregace
-
-Pokud požadujete mít kontrolu nad rychlostí, chcete z nějakého důvodu omezit rychlost, můžete využít skriptu agregace.
-Spusťte příkaz:
-```
-./init-pi2bus-agregace.sh
-```
-Přikaždém startu OS se aplikuje omezení rychlosti na všechny možné IP adresy v bezdrátové síti. Limity se nastavují v adresáři /opt/pi2bus/settings
 
 ### Statistika
 

@@ -1,0 +1,750 @@
+#!/bin/bash
+
+################################################################################
+# About script                                                                 #
+# You can edit this content.                                                   #
+################################################################################
+
+PI2BUS_VERSION="1"						# Number of version
+PI2BUS_DATE="11.8.2017"						# Date of version
+
+################################################################################
+# Variables                                                                    #
+# You can edit this content.                                                   #
+################################################################################
+
+INTERFACE_LAN="eth0"						# Service interface
+INTERFACE_WLAN="wlan0"						# Wireless interface
+INTERFACE_WAN="ppp0"						# Interface connected to the internet
+
+INTERFACE_LAN_IP="192.168.254.167"				# Service interface IP addres
+INTERFACE_LAN_MASK="255.255.255.0"				# Service interface netmask
+INTERFACE_LAN_GW="172.24.1.1"					# Service interface gateway
+INTERFACE_LAN_NETWORK="192.168.254.0"				# Service interface network
+INTERFACE_LAN_BROADCAST="192.168.1.255"				# Service interface broadcast
+
+INTERFACE_WLAN_IP="172.24.1.1"					# Wireless interface IP address
+INTERFACE_WLAN_MASK="255.255.255.0"				# Wireless interface netmask
+INTERFACE_WLAN_NETWORK="172.24.1.0"				# Wireless interface network
+INTERFACE_WLAN_BROADCAST="172.24.1.255"				# Wireless interface broadcast
+
+WIRELESS_SSID="MUJ-HOTSPOT"					# This is the name of the wireless network
+WIRELESS_HWMODE="g"						# Use the 2.4GHz band, recommended g
+WIRELESS_CHANNEL="6"						# Recommended channel 6
+WIRELESS_WMM="0"						# WMM disabled=0 enabled=1
+
+DHCP_SUBNET_RANGE_START="172.24.1.100"				# DHCP range start on wireless
+DHCP_SUBNET_RANGE_END="172.24.1.200"				# DHCP range start on wireless
+DHCP_SUBNET_DNS="217.31.204.130, 193.29.206.206"		# DHCP DNS servers, you can use multi dns with separator ", " (comma+space)
+DHCP_SUBNET_DOMAIN_NAME="mojesit.cz"				# DHCP domain name
+DHCP_DEFAULT_LEASE_TIME="600"					# DHCP lease time
+DHCP_MAX_LEASE_TIME="7200"					# DHCP max lease time
+
+SET_DOWNLOAD="512"						# Set max download
+SET_UPLOAD="128"						# Set max upload
+SET_MAXBANDWIDTH="100000"					# Set max bandwidth
+SET_NMCLI_CONNAME="O2LTE"					# Set connection name for NetworkManager, do not use space
+
+SET_PI2BUS_UPDATER="0"						# Allow update from server disabled=0 enabled=1
+SET_PI2BUS_UPDATER_SERVER="muj.aktualizacni.server"		# Server updater
+SET_PI2BUS_UPDATER_GROUP="moje-skupina"				# pi2bus group
+
+UPDATER_TIMEZONE="0"						# Allow update timezone disabled=0 enabled=1
+UPDATER_SIM_PIN="1"						# Allow update PIN disabled=0 enabled=1
+
+################################################################################
+# Interactive setup                                                            #
+# Do not edit this content!                                                    #
+################################################################################
+
+if [ $UPDATER_SIM_PIN -eq 1 ]; then
+	echo "SIM zabecpecte PINem. Snizi se tim zneuziti SIM."
+	echo ""
+	echo "Zadejte PIN pro SIM:"
+	read SET_SIM_PIN
+else
+	SET_SIM_PIN="0000"
+fi
+
+################################################################################
+# Variables                                                                    #
+# Do not edit this content!                                                    #
+################################################################################
+
+IAM="PI2BUS"
+PI2BUS_AUTHOR="Roman Fic; ZD systems, s.r.o; roman.fic@zdsystemy.cz; www.zdsystemy.cz"
+
+TIME_NOW=`date +%s`
+TIME_HUMAN="$(date -d @$TIME_NOW)"
+
+DHCP_SUBNET=$INTERFACE_WLAN_NETWORK
+DHCP_SUBNET_MASK=$INTERFACE_WLAN_MASK
+DHCP_SUBNET_ROUTER=$INTERFACE_WLAN_IP
+DHCP_SUBNET_BROADCAST=$INTERFACE_WLAN_BROADCAST
+
+SET_SUBNET="${INTERFACE_WLAN_IP%.*}."
+
+D_PI2BUS="/opt/pi2bus"
+D_SETTINGS=$D_PI2BUS/settings
+D_STAT=$D_PI2BUS/stat
+
+F_DOWNLOAD="$D_SETTINGS/download"
+F_UPLOAD="$D_SETTINGS/upload"
+F_MAXBANDWIDTH="$D_SETTINGS/maxbandwidth"
+F_SUBNET="$D_SETTINGS/subnet"
+F_WAN="$D_SETTINGS/wan"
+F_LAN="$D_SETTINGS/lan"
+F_VERSION="$D_SETTINGS/version"
+F_UPDATER="$D_SETTINGS/updater"
+F_UPDATER_SERVER="$D_SETTINGS/updater.server"
+F_UPDATER_GROUP="$D_SETTINGS/updater.group"
+F_NMCLI_CONNAME="/etc/NetworkManager/system-connections/$SET_NMCLI_CONNAME"
+F_FIREWALL="$D_SETTINGS/firewall"
+F_FIREWALL_INIT="/etc/network/if-pre-up.d/init-firewall"
+F_AGREGACE_INIT="/etc/network/if-up.d/init-agregace"
+
+################################################################################
+# Update and upgrade Raspbian                                                  #
+# Do not edit this content!                                                    #
+################################################################################
+
+sudo apt-get update && sudo apt-get -y upgrade
+
+################################################################################
+# Install recommended aplication                                               #
+################################################################################
+
+sudo apt-get -y install htop mc openvpn ntp ntpdate isc-dhcp-server hostapd usb-modeswitch network-manager apache2 git
+# Do not edit this content!                                                    #
+
+################################################################################
+# Setup date and time                                                          #
+# Do not edit this content!                                                    #
+################################################################################
+
+if [ $UPDATER_TIMEZONE -eq 1 ]; then
+	sudo dpkg-reconfigure tzdata
+fi
+
+################################################################################
+# Create folders                                                               #
+# Do not edit this content!                                                    #
+################################################################################
+
+sudo mkdir -p $D_PI2BUS
+sudo mkdir -p $D_SETTINGS
+sudo mkdir -p $D_STAT
+
+################################################################################
+# Bug dhcpcd                                                                   #
+# Raspberry takes the IP address from DHCP if it has a statistic               #
+# configuration.                                                               #
+# Run this workaround to turns off the dhcpc service.                          #
+# Do not edit this content!                                                    #
+################################################################################
+
+if [ ! -f $F_VERSION ]; then
+	sudo systemctl stop dhcpcd
+	sudo systemctl disable dhcpcd
+	sudo systemctl daemon-reload
+	sudo systemctl restart networking
+fi
+
+################################################################################
+# Create file pi2bus.interfaces and copy to /etc/network/interfaces            #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/network/interfaces; then
+	STATUS_FILE1="1"
+else
+	echo "Zjistena stara verze /etc/network/interfaces. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.interfaces
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.interfaces
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.interfaces
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.interfaces
+	echo "# interfaces(5) file used by ifup(8) and ifdown(8)"			>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "# Please note that this file is written to be used with dhcpcd"		>> pi2bus.interfaces
+	echo "# For static IP, consult /etc/dhcpcd.conf and 'man dhcpcd.conf'"		>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "# Include files from /etc/network/interfaces.d:"				>> pi2bus.interfaces
+	echo "source-directory /etc/network/interfaces.d"				>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "auto lo"									>> pi2bus.interfaces
+	echo "iface lo inet loopback"							>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "# Default setup"								>> pi2bus.interfaces
+	echo "#"									>> pi2bus.interfaces
+	echo "# iface eth0 inet manual"							>> pi2bus.interfaces
+	echo "#"									>> pi2bus.interfaces
+	echo "# allow-hotplug wlan0"							>> pi2bus.interfaces
+	echo "# iface wlan0 inet manual"						>> pi2bus.interfaces
+	echo "#	wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf"			>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "auto $INTERFACE_LAN"							>> pi2bus.interfaces
+	echo "iface $INTERFACE_LAN inet static"						>> pi2bus.interfaces
+	echo "	address $INTERFACE_LAN_IP"						>> pi2bus.interfaces
+	echo "	netmask $INTERFACE_LAN_MASK"						>> pi2bus.interfaces
+	echo "	gateway $INTERFACE_LAN_GW"						>> pi2bus.interfaces
+	echo "	network $INTERFACE_LAN_NETWORK"						>> pi2bus.interfaces
+	echo "	broadcast $INTERFACE_LAN_BROADCAST"					>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "auto $INTERFACE_WLAN"							>> pi2bus.interfaces
+	echo "iface $INTERFACE_WLAN inet static"					>> pi2bus.interfaces
+	echo "	address $INTERFACE_WLAN_IP"						>> pi2bus.interfaces
+	echo "	netmask $INTERFACE_WLAN_MASK"						>> pi2bus.interfaces
+	echo "	network $INTERFACE_WLAN_NETWORK"					>> pi2bus.interfaces
+	echo "	broadcast $INTERFACE_WLAN_BROADCAST"					>> pi2bus.interfaces
+	echo ""										>> pi2bus.interfaces
+	echo "allow-hotplug wlan1"							>> pi2bus.interfaces
+	echo "iface wlan1 inet manual"							>> pi2bus.interfaces
+	echo "	wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf"			>> pi2bus.interfaces
+
+	sudo cp pi2bus.interfaces /etc/network/interfaces
+	rm pi2bus.interfaces
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/network/interfaces; then
+		echo "Soubor /etc/network/interfaces je nyní aktualni."
+	else
+		"Soubor /etc/network/interfaces se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Create file pi2bus.hostapd.conf and copy to /etc/hostapd/hostapd.conf        #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/hostapd/hostapd.conf; then
+	STATUS_FILE2="1"
+else
+	echo "Zjistena stara verze /etc/hostapd/hostapd.conf. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.hostapd.conf
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.hostapd.conf
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.hostapd.conf
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.hostapd.conf
+	echo "# This is the name of the WiFi interface we configured above"		>> pi2bus.hostapd.conf
+	echo "interface=$INTERFACE_WLAN"							>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use the nl80211 driver with the brcmfmac driver"			>> pi2bus.hostapd.conf
+	echo "driver=nl80211"								>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# This is the name of the network"					>> pi2bus.hostapd.conf
+	echo "ssid=$WIRELESS_SSID"							>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use the 2.4GHz band"							>> pi2bus.hostapd.conf
+	echo "hw_mode=$WIRELESS_HWMODE"							>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use channel 6"								>> pi2bus.hostapd.conf
+	echo "channel=$WIRELESS_CHANNEL"						>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Enable 802.11n"								>> pi2bus.hostapd.conf
+	echo "ieee80211n=1"								>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Enable WMM"								>> pi2bus.hostapd.conf
+	echo "wmm_enabled=$WIRELESS_WMM"						>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Enable 40MHz channels with 20ns guard interval"				>> pi2bus.hostapd.conf
+	echo "ht_capab=[HT40][SHORT-GI-20][DSSS_CCK-40]"				>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Accept all MAC addresses"						>> pi2bus.hostapd.conf
+	echo "macaddr_acl=0"								>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use WPA authentication"							>> pi2bus.hostapd.conf
+	echo "#auth_algs=1"								>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Require clients to know the network name"				>> pi2bus.hostapd.conf
+	echo "ignore_broadcast_ssid=0"							>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use WPA2"								>> pi2bus.hostapd.conf
+	echo "#wpa=2"									>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use a pre-shared key"							>> pi2bus.hostapd.conf
+	echo "#wpa_key_mgmt=WPA-PSK"							>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# The network passphrase"							>> pi2bus.hostapd.conf
+	echo "#wpa_passphrase=raspberry"						>> pi2bus.hostapd.conf
+	echo ""										>> pi2bus.hostapd.conf
+	echo "# Use AES, instead of TKIP"						>> pi2bus.hostapd.conf
+	echo "#rsn_pairwise=CCMP"							>> pi2bus.hostapd.conf
+
+	sudo cp pi2bus.hostapd.conf /etc/hostapd/hostapd.conf
+	rm pi2bus.hostapd.conf
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/hostapd/hostapd.conf; then
+		echo "Soubor /etc/hostapd/hostapd.conf je nyní aktualni."
+	else
+		"Soubor /etc/hostapd/hostapd.conf se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Create file pi2bus.hostapd and copy to /etc/default/hostapd                  #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/default/hostapd; then
+	STATUS_FILE3="1"
+else
+	echo "Zjistena stara verze /etc/default/hostapd. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.hostapd
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.hostapd
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.hostapd
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.hostapd
+	echo "# Defaults for hostapd initscript"					>> pi2bus.hostapd
+	echo "#"									>> pi2bus.hostapd
+	echo "# See /usr/share/doc/hostapd/README.Debian for information about alternative"	>> pi2bus.hostapd
+	echo "# methods of managing hostapd."						>> pi2bus.hostapd
+	echo "#"									>> pi2bus.hostapd
+	echo "# Uncomment and set DAEMON_CONF to the absolute path of a hostapd configuration"	>> pi2bus.hostapd
+	echo "# file and hostapd will be started during system boot. An example configuration"	>> pi2bus.hostapd
+	echo "# file can be found at /usr/share/doc/hostapd/examples/hostapd.conf.gz"		>> pi2bus.hostapd
+	echo "#"									>> pi2bus.hostapd
+	echo "DAEMON_CONF=\"/etc/hostapd/hostapd.conf\""				>> pi2bus.hostapd
+	echo ""										>> pi2bus.hostapd
+	echo "# Additional daemon options to be appended to hostapd command:-"		>> pi2bus.hostapd
+	echo "# 	-d   show more debug messages (-dd for even more)"		>> pi2bus.hostapd
+	echo "# 	-K   include key data in debug messages"			>> pi2bus.hostapd
+	echo "# 	-t   include timestamps in some debug messages"			>> pi2bus.hostapd
+	echo "#"									>> pi2bus.hostapd
+	echo "# Note that -B (daemon mode) and -P (pidfile) options are automatically"	>> pi2bus.hostapd
+	echo "# configured by the init.d script and must not be added to DAEMON_OPTS."	>> pi2bus.hostapd
+	echo "#"									>> pi2bus.hostapd
+	echo "#DAEMON_OPTS=\"\""							>> pi2bus.hostapd
+
+	sudo cp pi2bus.hostapd /etc/default/hostapd
+	rm pi2bus.hostapd
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/default/hostapd; then
+		echo "Soubor /etc/default/hostapd je nyní aktualni."
+	else
+		"Soubor /etc/default/hostapd se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Create file pi2bus.isc-dhcp-server and copy to /etc/default/isc-dhcp-server  #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/default/isc-dhcp-server; then
+	STATUS_FILE4="1"
+else
+	echo "Zjistena stara verze /etc/default/isc-dhcp-server. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.isc-dhcp-server
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.isc-dhcp-server
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.isc-dhcp-server
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.isc-dhcp-server
+	echo "# Defaults for isc-dhcp-server initscript"				>> pi2bus.isc-dhcp-server
+	echo "# sourced by /etc/init.d/isc-dhcp-server"					>> pi2bus.isc-dhcp-server
+	echo "# installed at /etc/default/isc-dhcp-server by the maintainer scripts"	>> pi2bus.isc-dhcp-server
+	echo ""										>> pi2bus.isc-dhcp-server
+	echo "#"									>> pi2bus.isc-dhcp-server
+	echo "# This is a POSIX shell fragment"						>> pi2bus.isc-dhcp-server
+	echo "#"									>> pi2bus.isc-dhcp-server
+	echo ""										>> pi2bus.isc-dhcp-server
+	echo "# Path to dhcpd's config file (default: /etc/dhcp/dhcpd.conf)."		>> pi2bus.isc-dhcp-server
+	echo "#DHCPD_CONF=/etc/dhcp/dhcpd.conf"						>> pi2bus.isc-dhcp-server
+	echo ""										>> pi2bus.isc-dhcp-server
+	echo "# Path to dhcpd's PID file (default: /var/run/dhcpd.pid)."		>> pi2bus.isc-dhcp-server
+	echo "#DHCPD_PID=/var/run/dhcpd.pid"						>> pi2bus.isc-dhcp-server
+	echo ""										>> pi2bus.isc-dhcp-server
+	echo "# Additional options to start dhcpd with."				>> pi2bus.isc-dhcp-server
+	echo "#	Don't use options -cf or -pf here; use DHCPD_CONF/ DHCPD_PID instead"	>> pi2bus.isc-dhcp-server
+	echo "#OPTIONS=\"\""								>> pi2bus.isc-dhcp-server
+	echo ""										>> pi2bus.isc-dhcp-server
+	echo "# On what interfaces should the DHCP server (dhcpd) serve DHCP requests?"	>> pi2bus.isc-dhcp-server
+	echo "#	Separate multiple interfaces with spaces, e.g. \"eth0 eth1\"."		>> pi2bus.isc-dhcp-server
+	echo "INTERFACES=\"$INTERFACE_WLAN\""						>> pi2bus.isc-dhcp-server
+
+	sudo cp pi2bus.isc-dhcp-server /etc/default/isc-dhcp-server
+	rm pi2bus.isc-dhcp-server
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/default/isc-dhcp-server; then
+		echo "Soubor /etc/default/isc-dhcp-server je nyní aktualni."
+	else
+		"Soubor /etc/default/isc-dhcp-server se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Create file pi2bus.dhcpd.conf and copy to /etc/dhcp/dhcpd.conf               #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/dhcp/dhcpd.conf; then
+	STATUS_FILE5="1"
+else
+	echo "Zjistena stara verze /etc/dhcp/dhcpd.conf. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.dhcpd.conf
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.dhcpd.conf
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.dhcpd.conf
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.dhcpd.conf
+	echo "#"									>> pi2bus.dhcpd.conf
+	echo "# Sample configuration file for ISC dhcpd for Debian"			>> pi2bus.dhcpd.conf
+	echo "#"									>> pi2bus.dhcpd.conf
+	echo "#"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# The ddns-updates-style parameter controls whether or not the server will"	>> pi2bus.dhcpd.conf
+	echo "# attempt to do a DNS update when a lease is confirmed. We default to the"	>> pi2bus.dhcpd.conf
+	echo "# behavior of the version 2 packages ('none', since DHCP v2 didn't"	>> pi2bus.dhcpd.conf
+	echo "# have support for DDNS.)"						>> pi2bus.dhcpd.conf
+	echo "ddns-update-style none;"							>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# option definitions common to all supported networks..."			>> pi2bus.dhcpd.conf
+	echo "option domain-name \"example.org\";"					>> pi2bus.dhcpd.conf
+	echo "option domain-name-servers ns1.example.org, ns2.example.org;"		>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "default-lease-time $DHCP_DEFAULT_LEASE_TIME;"				>> pi2bus.dhcpd.conf
+	echo "max-lease-time $DHCP_MAX_LEASE_TIME;"					>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# If this DHCP server is the official DHCP server for the local"		>> pi2bus.dhcpd.conf
+	echo "# network, the authoritative directive should be uncommented."		>> pi2bus.dhcpd.conf
+	echo "authoritative;"								>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# Use this to send dhcp log messages to a different log file (you also"	>> pi2bus.dhcpd.conf
+	echo "# have to hack syslog.conf to complete the redirection)."			>> pi2bus.dhcpd.conf
+	echo "log-facility local7;"							>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# No service will be given on this subnet, but declaring it helps the "	>> pi2bus.dhcpd.conf
+	echo "# DHCP server to understand the network topology."			>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#subnet 10.152.187.0 netmask 255.255.255.0 {"				>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# This is a very basic subnet declaration."				>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#subnet 10.254.239.0 netmask 255.255.255.224 {"				>> pi2bus.dhcpd.conf
+	echo "#  range 10.254.239.10 10.254.239.20;"					>> pi2bus.dhcpd.conf
+	echo "#  option routers rtr-239-0-1.example.org, rtr-239-0-2.example.org;"	>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# This declaration allows BOOTP clients to get dynamic addresses,"	>> pi2bus.dhcpd.conf
+	echo "# which we don't really recommend."					>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#subnet 10.254.239.32 netmask 255.255.255.224 {"				>> pi2bus.dhcpd.conf
+	echo "#  range dynamic-bootp 10.254.239.40 10.254.239.60;"			>> pi2bus.dhcpd.conf
+	echo "#  option broadcast-address 10.254.239.31;"				>> pi2bus.dhcpd.conf
+	echo "#  option routers rtr-239-32-1.example.org;"				>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# A slightly different configuration for an internal subnet."		>> pi2bus.dhcpd.conf
+	echo "#subnet 10.5.5.0 netmask 255.255.255.224 {"				>> pi2bus.dhcpd.conf
+	echo "#  range 10.5.5.26 10.5.5.30;"						>> pi2bus.dhcpd.conf
+	echo "#  option domain-name-servers ns1.internal.example.org;"			>> pi2bus.dhcpd.conf
+	echo "#  option domain-name \"internal.example.org\";"				>> pi2bus.dhcpd.conf
+	echo "#  option routers 10.5.5.1;"						>> pi2bus.dhcpd.conf
+	echo "#  option broadcast-address 10.5.5.31;"					>> pi2bus.dhcpd.conf
+	echo "#  default-lease-time 600;"						>> pi2bus.dhcpd.conf
+	echo "#  max-lease-time 7200;"							>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# Hosts which require special configuration options can be listed in"	>> pi2bus.dhcpd.conf
+	echo "# host statements.   If no address is specified, the address will be"	>> pi2bus.dhcpd.conf
+	echo "# allocated dynamically (if possible), but the host-specific information"	>> pi2bus.dhcpd.conf
+	echo "# will still come from the host declaration."				>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#host passacaglia {"							>> pi2bus.dhcpd.conf
+	echo "#  hardware ethernet 0:0:c0:5d:bd:95;"					>> pi2bus.dhcpd.conf
+	echo "#	 filename \"vmunix.passacaglia\";"					>> pi2bus.dhcpd.conf
+	echo "#  server-name \"toccata.fugue.com\";"					>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# Fixed IP addresses can also be specified for hosts.   These addresses"	>> pi2bus.dhcpd.conf
+	echo "# should not also be listed as being available for dynamic assignment."	>> pi2bus.dhcpd.conf
+	echo "# Hosts for which fixed IP addresses have been specified can boot using"	>> pi2bus.dhcpd.conf
+	echo "# BOOTP or DHCP.   Hosts for which no fixed address is specified can only"	>> pi2bus.dhcpd.conf
+	echo "# be booted with DHCP, unless there is an address range on the subnet"	>> pi2bus.dhcpd.conf
+	echo "# to which a BOOTP client is connected which has the dynamic-bootp flag"	>> pi2bus.dhcpd.conf
+	echo "# set."									>> pi2bus.dhcpd.conf
+	echo "#host fantasia {"								>> pi2bus.dhcpd.conf
+	echo "#  hardware ethernet 08:00:07:26:c0:a5;"					>> pi2bus.dhcpd.conf
+	echo "#  fixed-address fantasia.fugue.com;"					>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "# You can declare a class of clients and then do address allocation"	>> pi2bus.dhcpd.conf
+	echo "# based on that.   The example below shows a case where all clients"	>> pi2bus.dhcpd.conf
+	echo "# in a certain class get addresses on the 10.17.224/24 subnet, and all"	>> pi2bus.dhcpd.conf
+	echo "# other clients get addresses on the 10.0.29/24 subnet."			>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#class \"foo\" {"								>> pi2bus.dhcpd.conf
+	echo "#  match if substring (option vendor-class-identifier, 0, 4) = \"SUNWq\";"	>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "#shared-network 224-29 {"							>> pi2bus.dhcpd.conf
+	echo "#  subnet 10.17.224.0 netmask 255.255.255.0 {"				>> pi2bus.dhcpd.conf
+	echo "#    option routers rtr-224.example.org;"					>> pi2bus.dhcpd.conf
+	echo "#  }"									>> pi2bus.dhcpd.conf
+	echo "#  subnet 10.0.29.0 netmask 255.255.255.0 {"				>> pi2bus.dhcpd.conf
+	echo "#    option routers rtr-29.example.org;"					>> pi2bus.dhcpd.conf
+	echo "#  }"									>> pi2bus.dhcpd.conf
+	echo "#  pool {"								>> pi2bus.dhcpd.conf
+	echo "#    allow members of \"foo\";"						>> pi2bus.dhcpd.conf
+	echo "#    range 10.17.224.10 10.17.224.250;"					>> pi2bus.dhcpd.conf
+	echo "#  }"									>> pi2bus.dhcpd.conf
+	echo "#  pool {"								>> pi2bus.dhcpd.conf
+	echo "#    deny members of \"foo\";"						>> pi2bus.dhcpd.conf
+	echo "#    range 10.0.29.10 10.0.29.230;"					>> pi2bus.dhcpd.conf
+	echo "#  }"									>> pi2bus.dhcpd.conf
+	echo "#}"									>> pi2bus.dhcpd.conf
+	echo ""										>> pi2bus.dhcpd.conf
+	echo "subnet $DHCP_SUBNET netmask $DHCP_SUBNET_MASK {"				>> pi2bus.dhcpd.conf
+	echo "	range $DHCP_SUBNET_RANGE_START $DHCP_SUBNET_RANGE_END;"			>> pi2bus.dhcpd.conf
+	echo "	option domain-name-servers $DHCP_SUBNET_DNS;		"		>> pi2bus.dhcpd.conf
+	echo "	option domain-name \"$DHCP_SUBNET_DOMAIN_NAME\";"			>> pi2bus.dhcpd.conf
+	echo "	option routers $DHCP_SUBNET_ROUTER;"					>> pi2bus.dhcpd.conf
+	echo "	option broadcast-address $DHCP_SUBNET_BROADCAST;"			>> pi2bus.dhcpd.conf
+	echo "	default-lease-time $DHCP_DEFAULT_LEASE_TIME;"				>> pi2bus.dhcpd.conf
+	echo "	max-lease-time $DHCP_MAX_LEASE_TIME;"					>> pi2bus.dhcpd.conf
+	echo "}"									>> pi2bus.dhcpd.conf
+
+	sudo cp pi2bus.dhcpd.conf /etc/dhcp/dhcpd.conf
+	rm pi2bus.dhcpd.conf
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" /etc/dhcp/dhcpd.conf; then
+		echo "Soubor /etc/dhcp/dhcpd.conf je nyní aktualni."
+	else
+		"Soubor /etc/dhcp/dhcpd.conf se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Create variables and limits                                                  #
+# Do not edit this content!                                                    #
+################################################################################
+
+echo $SET_DOWNLOAD > pi2bus.download
+sudo cp pi2bus.download $F_DOWNLOAD
+rm pi2bus.download
+
+echo $SET_UPLOAD > pi2bus.upload
+sudo cp pi2bus.upload $F_UPLOAD
+rm pi2bus.upload
+
+echo $SET_MAXBANDWIDTH > pi2bus.maxbandwidth
+sudo cp pi2bus.maxbandwidth $F_MAXBANDWIDTH
+rm pi2bus.maxbandwidth
+
+echo $SET_SUBNET > pi2bus.subnet
+sudo cp pi2bus.subnet $F_SUBNET
+rm pi2bus.subnet
+
+echo $INTERFACE_WAN > pi2bus.wan
+sudo cp pi2bus.wan $F_WAN
+rm pi2bus.wan
+
+echo $INTERFACE_WLAN > pi2bus.lan
+sudo cp pi2bus.lan $F_LAN
+rm pi2bus.lan
+
+echo $PI2BUS_VERSION > pi2bus.version
+sudo cp pi2bus.version $F_VERSION
+rm pi2bus.version
+
+echo $SET_PI2BUS_UPDATER > pi2bus.updater
+sudo cp pi2bus.updater $F_UPDATER
+rm pi2bus.updater
+
+echo $SET_PI2BUS_UPDATER_SERVER > pi2bus.updater.server
+sudo cp pi2bus.updater.server $F_UPDATER_SERVER
+rm pi2bus.updater.server
+
+echo $SET_PI2BUS_UPDATER_GROUP > pi2bus.updater.group
+sudo cp pi2bus.updater.group $F_UPDATER_GROUP
+rm pi2bus.updater.group
+
+if [ ! -f $F_NMCLI_CONNAME ]; then
+	sudo nmcli connection add con-name $SET_NMCLI_CONNAME type gsm ifname ttyUSB0 apn internet
+	sudo nmcli connection modify O2LTE gsm.pin $SET_SIM_PIN
+fi
+
+################################################################################
+# Setup portforwarding and minimal firewall                                    #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "#net.ipv4.ip_forward=1" /etc/sysctl.conf; then
+	sudo sed -i -e 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
+fi
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" $F_FIREWALL; then
+	STATUS_FILE6="1"
+else
+	echo "Zjistena stara verze $F_FIREWALL. Bude provedena aktualizace."
+	echo "# Generated $TIME_HUMAN from application $IAM"				> pi2bus.firewall
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.firewall
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.firewall
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.firewall
+	echo "#"									>> pi2bus.firewall
+	echo "*nat"									>> pi2bus.firewall
+	echo ":PREROUTING ACCEPT [0:0]"							>> pi2bus.firewall
+	echo ":INPUT ACCEPT [0:0]"							>> pi2bus.firewall
+	echo ":OUTPUT ACCEPT [0:0]"							>> pi2bus.firewall
+	echo ":POSTROUTING ACCEPT [0:0]"						>> pi2bus.firewall
+	echo "-A POSTROUTING -o $INTERFACE_WAN -j MASQUERADE"				>> pi2bus.firewall
+	echo "COMMIT"									>> pi2bus.firewall
+	echo "*filter"									>> pi2bus.firewall
+	echo ":INPUT DROP [0:0]"							>> pi2bus.firewall
+	echo ":FORWARD DROP [0:0]"							>> pi2bus.firewall
+	echo ":OUTPUT ACCEPT [0:0]"							>> pi2bus.firewall
+	echo "-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT"			>> pi2bus.firewall
+	echo "-A INPUT -i $INTERFACE_LAN -p tcp -m tcp --dport 22 -j ACCEPT"		>> pi2bus.firewall
+	echo "-A INPUT -i $INTERFACE_WLAN -p tcp -m tcp --dport 22 -j ACCEPT"		>> pi2bus.firewall
+	echo "-A INPUT -i $INTERFACE_WLAN -p tcp -m tcp --dport 67 -j ACCEPT"		>> pi2bus.firewall
+	echo "-A INPUT -i $INTERFACE_WLAN -p udp -m udp --dport 68 -j ACCEPT"		>> pi2bus.firewall
+	echo "-A FORWARD -i $INTERFACE_WAN -o $INTERFACE_WLAN -m state --state RELATED,ESTABLISHED -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -d 217.31.204.130/32 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 53 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -d 193.29.206.206/32 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 53 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -d 217.31.204.130/32 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p udp -m udp --dport 53 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -d 193.29.206.206/32 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p udp -m udp --dport 53 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 80 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 443 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 110 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 143 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 993 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 995 -j ACCEPT"	>> pi2bus.firewall
+	echo "-A FORWARD -s 172.24.1.0/24 -i $INTERFACE_WLAN -o $INTERFACE_WAN -p tcp -m tcp --dport 465 -j ACCEPT"	>> pi2bus.firewall
+	echo "COMMIT"									>> pi2bus.firewall
+
+	sudo cp pi2bus.firewall $F_FIREWALL
+	rm pi2bus.firewall
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" $F_FIREWALL; then
+		echo "Soubor $F_FIREWALL je nyní aktualni."
+	else
+		"Soubor $F_FIREWALL se nepodařilo aktualizovat."
+	fi
+
+fi
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" $F_FIREWALL_INIT; then
+	STATUS_FILE7="1"
+else
+	echo "Zjistena stara verze $F_FIREWALL_INIT. Bude provedena aktualizace."
+	echo "#!/bin/sh"								> pi2bus.init-firewall
+	echo "# Generated $TIME_HUMAN from application $IAM"				>> pi2bus.init-firewall
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.init-firewall
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.init-firewall
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.init-firewall
+	echo "#"									>> pi2bus.init-firewall
+	echo "/sbin/iptables-restore < $F_FIREWALL"					>> pi2bus.init-firewall
+
+	sudo cp pi2bus.init-firewall $F_FIREWALL_INIT
+	sudo chmod 755 $F_FIREWALL_INIT
+	sudo chown root:root $F_FIREWALL_INIT
+	rm pi2bus.init-firewall
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" $F_FIREWALL_INIT; then
+		echo "Soubor $F_FIREWALL_INIT je nyní aktualni."
+	else
+		"Soubor $F_FIREWALL_INIT se nepodařilo aktualizovat."
+	fi
+
+fi
+
+################################################################################
+# Setup agregate                                                               #
+# Do not edit this content!                                                    #
+################################################################################
+
+if grep -Fxq "# Version: $PI2BUS_VERSION" $F_AGREGACE_INIT; then
+	STATUS_FILE8="1"
+else
+	echo "Zjistena stara verze $F_AGREGACE_INIT. Bude provedena aktualizace."
+	echo "#!/bin/bash"								> pi2bus.agregace
+	echo "# Generated $TIME_HUMAN from application $IAM"				>> pi2bus.agregace
+	echo "# Version: $PI2BUS_VERSION"						>> pi2bus.agregace
+	echo "# Autor: $PI2BUS_AUTHOR"							>> pi2bus.agregace
+	echo "# Date: $PI2BUS_DATE"							>> pi2bus.agregace
+	echo "#"									>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# set netcard"								>> pi2bus.agregace
+	echo "NETCARD1=\`cat $F_LAN\`"							>> pi2bus.agregace
+	echo "NETCARD2=\`cat $F_WAN\`"							>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# set subnet LAN"								>> pi2bus.agregace
+	echo "SUBNET=\`cat $F_SUBNET\`"							>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# set download"								>> pi2bus.agregace
+	echo "DOWNLOAD=\`cat $F_DOWNLOAD\`"						>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# set upload"								>> pi2bus.agregace
+	echo "UPLOAD=\`cat $F_UPLOAD\`"							>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# set max bandwidth"							>> pi2bus.agregace
+	echo "MAXBANDWIDTH=\`cat $F_MAXBANDWIDTH\`"					>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# declare bandwidth, same for all"					>> pi2bus.agregace
+	echo "declare -A ipctrl"							>> pi2bus.agregace
+	echo "declare -A bandwidth"							>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "for((i=2;i<=254;i++))"							>> pi2bus.agregace
+	echo "do"									>> pi2bus.agregace
+	echo "	bandwidth["download"]=\$DOWNLOAD"					>> pi2bus.agregace
+	echo "	bandwidth["upload"]=\$UPLOAD"						>> pi2bus.agregace
+	echo "	for key in "\${!bandwidth[@]}";"					>> pi2bus.agregace
+	echo "	do"									>> pi2bus.agregace
+	echo "		ipctrl[\$i,\$key]=\${bandwidth[\$key]}"				>> pi2bus.agregace
+	echo "	done"									>> pi2bus.agregace
+	echo "done"									>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "declare -p ipctrl"							>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# reinit"									>> pi2bus.agregace
+	echo "iptables -F -t mangle"							>> pi2bus.agregace
+	echo "tc qdisc del dev \$NETCARD1 root handle 1"				>> pi2bus.agregace
+	echo "tc qdisc del dev \$NETCARD2 root handle 1"				>> pi2bus.agregace
+	echo "tc qdisc add dev \$NETCARD1 root handle 1: htb default 9999"		>> pi2bus.agregace
+	echo "tc qdisc add dev \$NETCARD2 root handle 1: htb default 9999"		>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "# create the default class"						>> pi2bus.agregace
+	echo "tc class add dev \$NETCARD1 parent 1:0 classid 1:9999 htb rate \$(( \$MAXBANDWIDTH ))kbit ceil \$(( \$MAXBANDWIDTH ))kbit burst 5k prio 9999"	>> pi2bus.agregace
+	echo "tc class add dev \$NETCARD2 parent 1:0 classid 1:9999 htb rate \$(( \$MAXBANDWIDTH ))kbit ceil \$(( \$MAXBANDWIDTH ))kbit burst 5k prio 9999"	>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "for((i=2;i<=254;i++))"							>> pi2bus.agregace
+	echo "do"									>> pi2bus.agregace
+	echo "	# set IP"								>> pi2bus.agregace
+	echo "	IP=\$SUBNET\$i"								>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "	# set download for IP"							>> pi2bus.agregace
+	echo "	DOWNLOAD=\${ipctrl[\$i,download]}"					>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "	# set upload for IP"							>> pi2bus.agregace
+	echo "	UPLOAD=\${ipctrl[\$i,upload]}"						>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "	# traffic shaping rule"							>> pi2bus.agregace
+	echo "	tc class add dev \$NETCARD1 parent 1:0 classid 1:\$i htb rate \$(( \$DOWNLOAD ))kbit ceil \$(( \$DOWNLOAD ))kbit burst 5k prio \$i"	>> pi2bus.agregace
+	echo "	tc class add dev \$NETCARD2 parent 1:0 classid 1:\$i htb rate \$(( \$UPLOAD ))kbit ceil \$(( \$UPLOAD ))kbit burst 5k prio \$i"	>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "	# netfilter packet marking rule"					>> pi2bus.agregace
+	echo "	iptables -t mangle -A FORWARD -i \$NETCARD1 -s \$IP -j CONNMARK --set-mark \$i"	>> pi2bus.agregace
+	echo "	iptables -t mangle -A FORWARD -i \$NETCARD2 -d \$IP -j CONNMARK --set-mark \$i"	>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "	# filter that bind the two"						>> pi2bus.agregace
+	echo "	tc filter add dev \$NETCARD1 parent 1:0 protocol ip prio \$i handle \$i fw flowid 1:\$i"	>> pi2bus.agregace
+	echo "	tc filter add dev \$NETCARD2 parent 1:0 protocol ip prio \$i handle \$i fw flowid 1:\$i"	>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "done"									>> pi2bus.agregace
+	echo ""										>> pi2bus.agregace
+	echo "#propagate netfilter marks on connections"				>> pi2bus.agregace
+	echo "iptables -t mangle -A POSTROUTING -j CONNMARK --restore-mark"		>> pi2bus.agregace
+
+	sudo cp pi2bus.agregace $F_AGREGACE_INIT
+	sudo chmod 755 $F_AGREGACE_INIT
+	sudo chown root:root $F_AGREGACE_INIT
+	rm pi2bus.agregace
+
+	if grep -Fxq "# Version: $PI2BUS_VERSION" $F_AGREGACE_INIT; then
+		echo "Soubor $F_AGREGACE_INIT je nyní aktualni."
+	else
+		"Soubor $F_AGREGACE_INIT se nepodařilo aktualizovat."
+	fi
+
+fi
+
